@@ -54,7 +54,7 @@ def main():
 
     # run the mapper 
     start_time = time.time()
-    subprocess.run(["python3", mapper, reference_file, reads, output_file], check=True)
+    subprocess.run(["python3", mapper, reference_file, reads, output_file], check=True, stderr=sys.stderr)
     end_time = time.time() - start_time 
 
     # get the real and predicted reads
