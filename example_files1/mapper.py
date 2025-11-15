@@ -6,6 +6,7 @@
 from collections import defaultdict
 import sys
 import numpy
+from tqdm import tqdm
 
 # DP algorithm adapted from Langmead's notebooks
 def _trace(D, x, y):
@@ -83,8 +84,8 @@ index = simpleIndex(str(seq_rec_list[0].seq), 20, 11)
 del seq_rec_list
 
 fout = open(argv[3], "w")
-reads = SeqIO.parse(argv[2], "fasta")
-for read in reads:
+reads = list(SeqIO.parse(argv[2], "fasta"))
+for read in tqdm(reads):
     hits = index.query(str(read.seq), len(read.seq)//9, 12)
     if hits:
         fout.write("{}\t{}\t{}\n".format(read.id, hits[0][1], hits[0][2]))
