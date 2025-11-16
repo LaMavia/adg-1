@@ -10,6 +10,18 @@ from Bio import SeqIO
 from sys import argv
 import math
 
+from contextlib import contextmanager
+from time import perf_counter
+
+
+@contextmanager
+def catchtime(label: str):
+    t1 = t2 = perf_counter()
+    yield
+    t2 = perf_counter()
+    print(f'{label} took {t2 - t1:.3f} s')
+
+
 def radixpass(a, b, r, n, k) :
   c = array("i", [0]*(k+1))
   for i in range(n) :
@@ -313,7 +325,7 @@ class FmIndex():
 
 def partition(p, pieces=2):
     assert len(p) >= pieces
-    base, mod = math.floor(len(p) / pieces), len(p) % pieces
+    base, mod = len(p) // pieces, len(p) % pieces
     idx = 0
     ps = []
     modAdjust = 1
@@ -346,7 +358,8 @@ def queryIndexEdit(p, t, k, index):
 def main():
     seq_rec=next(SeqIO.parse(argv[1], "fasta"))
     t = str(seq_rec.seq)
-    index = FmIndex(t)
+    with catchtime("fm-index"):
+        index = FmIndex(t)
 
     fout = open(argv[3], "w")
     reads = list(SeqIO.parse(argv[2], "fasta"))
