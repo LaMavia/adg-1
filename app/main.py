@@ -135,7 +135,6 @@ def trace(D, x, y, yl: int, yr: int):
     xscript = 0
     while i > 0:
         diag, vert, horz = sys.maxsize, sys.maxsize, sys.maxsize
-        delt = None
         if i > 0 and j > 0:
             delt = 0 if x[i-1] == y[yl + j-1] else 1
             diag = D[i-1, j-1] + delt
@@ -143,17 +142,15 @@ def trace(D, x, y, yl: int, yr: int):
             vert = D[i-1, j] + 1
         if j > 0:
             horz = D[i, j-1] + 1
+        xscript += 1
         if diag <= vert and diag <= horz:
             # diagonal was best
-            xscript += 1
             i -= 1; j -= 1
         elif vert <= horz:
             # vertical was best; this is an insertion in x w/r/t y
-            xscript += 1
             i -= 1
         else:
             # horizontal was best
-            xscript += 1
             j -= 1
     # j = offset of the first (leftmost) character of t involved in the
     # alignment
@@ -179,7 +176,7 @@ def kEditDp(p: str, t: str, tl: int, tr: int, k: int, D: NDArray):
             row_min = min(row_min, v)
 
         if row_min > k:
-            return sys.maxsize, 0, 0, D
+            return sys.maxsize, 0, 0
 
     # Find minimum edit distance in last row
     last_row = D[len(p), :]
@@ -189,7 +186,7 @@ def kEditDp(p: str, t: str, tl: int, tr: int, k: int, D: NDArray):
     # t[lt:tr][:mnJ]
     off, xcript = trace(D, p, t, tl, tl + mnJ) #type: ignore
     # Return edit distance, offset into T, edit transcript
-    return mn, off, xcript, D
+    return mn, off, xcript
 
 def bwtFromSa(t, sa=None):
     ''' Given T, returns BWT(T) by way of the suffix array. '''
@@ -353,9 +350,9 @@ def partition(p, pieces=2):
 def queryIndexEdit(p, t, k, index):
     ''' Look for occurrences of p in t with up to k edits using an
         index combined with dynamic-programming alignment. '''
-    D : NDArray | None = None
-    dp_range = 0
     for part, poff in partition(p, k+1):
+        D : NDArray | None = None
+        dp_range = 0
         for hit in index.occurrences(part): # query index w/ partition
             # left edge of T to include in DP matrix
             lf = max(0, hit - poff - k)
@@ -365,7 +362,7 @@ def queryIndexEdit(p, t, k, index):
                 D = allocDpArray(p, hit_range)
                 dp_range = hit_range
             # with catchtime(f"[kEditDp] range={rt-lf + 1}"):
-            mn, off, xcript, _ = kEditDp(p, t, lf,rt, k, D)
+            mn, off, xcript = kEditDp(p, t, lf,rt, k, D)
             off += lf
             if mn <= k:
                 yield (mn, off, off + xcript)
