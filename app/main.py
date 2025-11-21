@@ -5,6 +5,7 @@ import sys
 import numpy
 # from collections import deque
 from array import array
+from numpy._typing import NDArray
 from tqdm import tqdm
 from Bio import SeqIO
 from sys import argv
@@ -124,17 +125,19 @@ def kark_sort(s, SA, n, K):
 # string labeling the columns
 
 def suffixArray(t):
-    return direct_kark_sort(t)
+    with catchtime("suffixArray"):
+        return direct_kark_sort(t)
 
-def trace(D, x, y):
+def trace(D, x, y, yl: int, yr: int):
     ''' Backtrace edit-distance matrix D for strings x and y '''
-    i, j = len(x), len(y)
-    xscript = []
+    y_len = yr - yl
+    i, j = len(x), y_len
+    xscript = 0
     while i > 0:
         diag, vert, horz = sys.maxsize, sys.maxsize, sys.maxsize
         delt = None
         if i > 0 and j > 0:
-            delt = 0 if x[i-1] == y[j-1] else 1
+            delt = 0 if x[i-1] == y[yl + j-1] else 1
             diag = D[i-1, j-1] + delt
         if i > 0:
             vert = D[i-1, j] + 1
@@ -142,39 +145,49 @@ def trace(D, x, y):
             horz = D[i, j-1] + 1
         if diag <= vert and diag <= horz:
             # diagonal was best
-            xscript.append('R' if delt == 1 else 'M')
+            xscript += 1
             i -= 1; j -= 1
         elif vert <= horz:
             # vertical was best; this is an insertion in x w/r/t y
-            xscript.append('I')
+            xscript += 1
             i -= 1
         else:
             # horizontal was best
-            xscript.append('D')
+            xscript += 1
             j -= 1
     # j = offset of the first (leftmost) character of t involved in the
     # alignment
-    return j, (''.join(xscript))[::-1] # reverse and string-ize
+    return j, xscript
 
-def kEditDp(p, t):
+def allocDpArray(p: str, t_len: int):
+    D = numpy.zeros((len(p)+1, t_len+1), dtype=int)
+    D[1:, 0] = range(1, len(p)+1)
+
+    return D
+
+def kEditDp(p: str, t: str, tl: int, tr: int, k: int, D: NDArray):
     ''' Find and return the alignment of p to a substring of t with the
         fewest edits.  We return the edit distance, the offset of the
         substring aligned to, and the edit transcript.  If multiple
         alignments tie for best, we report the leftmost. '''
-    D = numpy.zeros((len(p)+1, len(t)+1), dtype=int)
-    # Note: First row gets zeros.  First column initialized as usual.
-    D[1:, 0] = range(1, len(p)+1)
+    t_len = tr - tl
     for i in range(1, len(p)+1):
-        for j in range(1, len(t)+1):
-            delt = 1 if p[i-1] != t[j-1] else 0
-            D[i, j] = min(D[i-1, j-1] + delt, D[i-1, j] + 1, D[i, j-1] + 1)
+        row_min = sys.maxsize
+        for j in range(1, t_len+1):
+            delt = 1 if p[i-1] != t[tl + j-1] else 0
+            D[i, j] = (v := min(D[i-1, j-1] + delt, D[i-1, j] + 1, D[i, j-1] + 1))
+            row_min = min(row_min, v)
+
+        if row_min > k:
+            return sys.maxsize, 0, 0, D
+
     # Find minimum edit distance in last row
-    mnJ, mn = None, len(p) + len(t)
-    for j in range(len(t)+1):
-        if D[len(p), j] < mn:
-            mnJ, mn = j, D[len(p), j]
+    last_row = D[len(p), :]
+    mnJ = last_row.argmin()
+    mn = last_row[mnJ]
     # Backtrace; note: stops as soon as it gets to first row
-    off, xcript = trace(D, p, t[:mnJ])
+    # t[lt:tr][:mnJ]
+    off, xcript = trace(D, p, t, tl, tl + mnJ) #type: ignore
     # Return edit distance, offset into T, edit transcript
     return mn, off, xcript, D
 
@@ -318,6 +331,7 @@ class FmIndex():
     def occurrences(self, p):
         ''' Return offsets for all occurrences of p, in no particular order '''
         l, r = self.range(p)
+        # print(f"[FMI.occurrences] range_len={r - l + 1}")
         return (self.resolve(x) for x in range(l, r))
 
 # First we make a function that splits a string p up into a set of
@@ -339,22 +353,23 @@ def partition(p, pieces=2):
 def queryIndexEdit(p, t, k, index):
     ''' Look for occurrences of p in t with up to k edits using an
         index combined with dynamic-programming alignment. '''
-    occurrences = []
-    seen = set()     # for avoiding reporting same hit twice
+    D : NDArray | None = None
+    dp_range = 0
     for part, poff in partition(p, k+1):
         for hit in index.occurrences(part): # query index w/ partition
             # left edge of T to include in DP matrix
             lf = max(0, hit - poff - k)
             # right edge of T to include in DP matrix
             rt = min(len(t), hit - poff + len(p) + k)
-            mn, off, xcript, _ = kEditDp(p, t[lf:rt])
+            if (hit_range := rt - lf) > dp_range or D is None:
+                D = allocDpArray(p, hit_range)
+                dp_range = hit_range
+            # with catchtime(f"[kEditDp] range={rt-lf + 1}"):
+            mn, off, xcript, _ = kEditDp(p, t, lf,rt, k, D)
             off += lf
-            if mn <= k and (mn, off) not in seen:
-                yield (mn, off, off + len(xcript))
-                seen.add((mn, off))
+            if mn <= k:
+                yield (mn, off, off + xcript)
                 
-    return occurrences
-
 def main():
     seq_rec=next(SeqIO.parse(argv[1], "fasta"))
     t = str(seq_rec.seq)
