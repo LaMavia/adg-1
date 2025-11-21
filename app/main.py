@@ -2,7 +2,7 @@
 # look for approximate occurrences of p in t.
 
 import sys
-import numpy
+import numpy as np
 # from collections import deque
 from array import array
 from numpy._typing import NDArray
@@ -38,10 +38,10 @@ def radixpass(a, b, r, n, k) :
     c[r[a[i]]] += 1
 
 def direct_kark_sort(s) :
-  alphabet = [None] + sorted(set(s))
+  alphabet=[None, '$', 'A', 'C', 'G', 'T']
   k = len(alphabet)
   n = len(s)
-  t = dict((c, i) for i,c in enumerate(alphabet))
+  t = {None:0, '$': 1, 'A': 2, 'C': 3, 'G': 4, 'T': 5}
   SA = array('i', [0]*(n+3))
   kark_sort(array('i', [t[c] for c in s]+[0]*3), SA, n, k)
   return SA[:n]
@@ -157,7 +157,7 @@ def trace(D, x, y, yl: int, yr: int):
     return j, xscript
 
 def allocDpArray(p: str, t_len: int):
-    D = numpy.zeros((len(p)+1, t_len+1), dtype=int)
+    D = np.zeros((len(p)+1, t_len+1), dtype=int)
     D[1:, 0] = range(1, len(p)+1)
 
     return D
