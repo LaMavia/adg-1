@@ -347,6 +347,39 @@ def partition(p, pieces=2):
         idx = newIdx
     return ps
 
+def myersBitParallel(p, t, tl, tr, k):
+    m = len(p)
+    B = {c: 0 for c in 'ACGT$'}
+    for i, c in enumerate(p):
+        B[c] |= 1 << i
+
+    Pe = 0
+    Ne = 0
+    Score = m
+    best_score = m + 1
+    end_pos = 0
+
+    for j, c in enumerate(t[tl:tr]):
+        char_mask = B.get(c, 0)
+        X = char_mask | Ne
+        D0 = (((X & Pe) + Pe) ^ Pe) | X
+        Hp = Ne | ~(D0 | Pe)
+        Hn = D0 & Pe
+        Pe = (Hn << 1) | ~(D0 | ((Hp << 1) | 1))
+        Ne = (Hp << 1) & D0
+
+        if (D0 >> (m-1)) & 1:
+            Score += 1
+        elif (Hp >> (m-1)) & 1:
+            Score -= 1
+
+        if Score < best_score:
+            best_score = Score
+            end_pos = j
+
+    start_pos = max(tl, end_pos - m + 1)
+    return best_score, start_pos, m
+
 def queryIndexEdit(p, t, k, index):
     ''' Look for occurrences of p in t with up to k edits using an
         index combined with dynamic-programming alignment. '''
@@ -361,8 +394,14 @@ def queryIndexEdit(p, t, k, index):
             if (hit_range := rt - lf) > dp_range or D is None:
                 D = allocDpArray(p, hit_range)
                 dp_range = hit_range
+
+            prefix_len = min(len(p) // 2, 16)  # first 16 bases or half of p
+            mismatches = sum(1 for i in range(prefix_len) if p[i] != t[lf + i])
+            if mismatches > k:
+                continue
+
             # with catchtime(f"[kEditDp] range={rt-lf + 1}"):
-            mn, off, xcript = kEditDp(p, t, lf,rt, k, D)
+            mn, off, xcript = myersBitParallel(p, t, lf, rt, k)
             off += lf
             if mn <= k:
                 yield (mn, off, off + xcript)
