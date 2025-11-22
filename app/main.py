@@ -347,38 +347,72 @@ def partition(p, pieces=2):
         idx = newIdx
     return ps
 
-def myersBitParallel(p, t, tl, tr, k):
+def myersBitParallel(p: str, t: str, tl: int, tr: int, k: int):
+    """
+    Correct Myers 1999 bit-parallel edit-distance algorithm.
+    Returns (edit_dist, offset_in_t, alignment_length).
+    Only supports patterns up to 64bp.
+    """
+
     m = len(p)
-    B = {c: 0 for c in 'ACGT$'}
+    if m > 64:
+        # fallback to DP
+        return kEditDp(p, t, tl, tr, k, allocDpArray(p, tr - tl))
+
+    # build pattern bitmasks
+    Peq = {}
+    for c in "ACGT$":
+        Peq[c] = 0
     for i, c in enumerate(p):
-        B[c] |= 1 << i
+        Peq[c] |= 1 << i
 
-    Pe = 0
-    Ne = 0
+    # initialize bit-vectors
+    Pv = (1 << m) - 1   # all 1s
+    Mv = 0
     Score = m
-    best_score = m + 1
-    end_pos = 0
+    best = m + 1
+    best_end = -1
 
-    for j, c in enumerate(t[tl:tr]):
-        char_mask = B.get(c, 0)
-        X = char_mask | Ne
-        D0 = (((X & Pe) + Pe) ^ Pe) | X
-        Hp = Ne | ~(D0 | Pe)
-        Hn = D0 & Pe
-        Pe = (Hn << 1) | ~(D0 | ((Hp << 1) | 1))
-        Ne = (Hp << 1) & D0
+    # main scan
+    for j in range(tl, tr):
+        c = t[j]
+        Eq = Peq.get(c, 0)
 
-        if (D0 >> (m-1)) & 1:
-            Score += 1
-        elif (Hp >> (m-1)) & 1:
+        Xv = Eq | Mv
+        Xh = ((((Xv & Pv) + Pv) ^ Pv) | Xv)
+
+        Ph = Mv | ~(Xh | Pv)
+        Mh = Pv & Xh
+
+        # update Pv/Mv
+        Pv = (Mh << 1) | ~(Xh | (Ph << 1))
+        Mv = (Ph << 1) & ((1 << m) - 1)
+
+        # update score at last pattern position
+        if (Ph >> (m - 1)) & 1:
             Score -= 1
+        elif (Mh >> (m - 1)) & 1:
+            Score += 1
 
-        if Score < best_score:
-            best_score = Score
-            end_pos = j
+        # track best score
+        if Score < best:
+            best = Score
+            best_end = j
 
-    start_pos = max(tl, end_pos - m + 1)
-    return best_score, start_pos, m
+        # bounded: early stop if impossible
+        if best == 0:
+            break
+        if Score > k:
+            # cannot continue in a valid window—skip rest
+            continue
+
+    if best_end == -1:
+        return best, 0, m
+
+    # alignment length is always m in Myers (pattern length)
+    return best, best_end - m + 1, m
+
+
 
 def queryIndexEdit(p, t, k, index):
     ''' Look for occurrences of p in t with up to k edits using an
