@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-from collections import defaultdict
-from array import array
 from Bio import SeqIO
 from sys import argv
 from contextlib import contextmanager
 from time import perf_counter
 from tqdm import tqdm
-from mmh3 import hash
+import hashlib
+from collections import defaultdict, deque
+from array import array
 import math
 
 @contextmanager
@@ -17,38 +17,35 @@ def catchtime(label: str):
     print(f'{label} took {t2 - t1:.3f} s')
 
 
-# def rolling_kmer_hashes(seq: str, k: int):
-#     """Compute rolling k-mer hashes using 2-bit encoding and mmh3."""
-#     n = len(seq)
-#     if n < k:
-#         return []
-#     h = hash(seq[:k])
-#     result = [h]
-#     mask = (1 << (2 * k)) - 1
-#     base2bit = {'A':0,'C':1,'G':2,'T':3}
-#     rolling = 0
-#     valid = True
-#     for i in range(n - k + 1):
-#         if i == 0:
-#             # first k-mer already hashed
-#             rolling = 0
-#             for c in seq[:k]:
-#                 rolling = (rolling << 2) | base2bit.get(c,0)
-#             continue
-#         # shift left 2 bits and add new nucleotide
-#         rolling = ((rolling << 2) & mask) | base2bit.get(seq[i+k-1],0)
-#         h = hash(seq[i:i+k])  # can also use rolling hash, kept simple for mmh3
-#         result.append(h)
-#     return result
-
+# def get_minimizers(seq: str, k: int, w: int):
+#     """Yield (window_pos, minimizer_hash) lazily (generator)."""
+#     from collections import deque
+#     kmer_gen = rolling_kmer_hashes(seq, k)
+#     window = deque()
+#     for i, h in enumerate(kmer_gen):
+#         window.append(h)
+#         if len(window) > w:
+#             window.popleft()
+#         if len(window) == w:
+#             yield i - w + 1, min(window)
 
 def get_minimizers(seq: str, k: int, w: int):
-    """Yield (window_pos, minimizer_hash) using rolling k-mer hashes."""
-    kmer_hashes = rolling_kmer_hashes(seq, k)
-    for i in range(len(kmer_hashes) - w + 1):
-        window = kmer_hashes[i:i+w]
-        minim = min(window)
-        yield i, minim
+    window = deque()
+    for i, h in enumerate(rolling_kmer_hashes(seq, k)):
+        window.append(h)
+        if len(window) > w:
+            window.popleft()
+        if len(window) == w:
+            yield i - w + 1, min(window)
+
+
+# def get_minimizers(seq: str, k: int, w: int):
+#     """Yield (window_pos, minimizer_hash) using rolling k-mer hashes."""
+#     kmer_hashes = rolling_kmer_hashes(seq, k)
+#     for i in range(len(kmer_hashes) - w + 1):
+#         window = kmer_hashes[i:i+w]
+#         minim = min(window)
+#         yield i, minim
 
 
 def choose_k_for_error(read_len: int, err_rate: float):
@@ -56,13 +53,12 @@ def choose_k_for_error(read_len: int, err_rate: float):
     k = max(10, min(20, int(-math.log(0.25)/math.log(1-err_rate))))
     return k
 
-
 class MashMapIndex:
     def __init__(self, ref_seq: str, k: int, windows=[15,30,60]):
         self.k = k
         self.windows = windows
+        # use array('I') for memory-efficient storage
         self.index = defaultdict(lambda: array('I'))
-        self.ref_seq = ref_seq
         self.build_index(ref_seq)
 
     def build_index(self, ref_seq: str):
@@ -75,54 +71,111 @@ class MashMapIndex:
         for w in self.windows:
             for read_pos, m in get_minimizers(read_seq, k=self.k, w=w):
                 ref_positions = self.index.get((w,m))
-                if not ref_positions:
-                    continue
-                for ref_pos in ref_positions:
-                    offset = ref_pos - read_pos
-                    hits[offset] += 1
+                if ref_positions:
+                    for ref_pos in ref_positions:
+                        hits[ref_pos - read_pos] += 1
         return hits
 
 
-# def mashmap_map_read(read_seq: str, index: MashMapIndex, min_hits_ratio=0.2):
-#     hits = index.query(read_seq)
-#     first_w = index.windows[0]
-#     minimizer_count = sum(1 for _ in get_minimizers(read_seq, k=index.k, w=first_w))
-#     min_hits = max(1, int(minimizer_count * min_hits_ratio))
+# class MashMapIndex:
+#     def __init__(self, ref_seq: str, k: int, windows=[15,30,60]):
+#         self.k = k
+#         self.windows = windows
+#         self.index = {}  # dict with tuple key -> list of positions
+#         self.build_index(ref_seq)
 #
-#     try:
-#         candidate_positions = [next(pos for pos,count in hits.items() if count >= min_hits)]
-#     except StopIteration:
-#         candidate_positions = []
+#     def build_index(self, ref_seq: str):
+#         for w in self.windows:
+#             for pos, m in get_minimizers(ref_seq, k=self.k, w=w):
+#                 if (w,m) not in self.index:
+#                     self.index[(w,m)] = []
+#                 self.index[(w,m)].append(pos)
 #
-#     return candidate_positions
+#     def query(self, read_seq: str):
+#         hits = {}
+#         for w in self.windows:
+#             for read_pos, m in get_minimizers(read_seq, k=self.k, w=w):
+#                 ref_positions = self.index.get((w,m))
+#                 if not ref_positions:
+#                     continue
+#                 for ref_pos in ref_positions:
+#                     offset = ref_pos - read_pos
+#                     hits[offset] = hits.get(offset, 0) + 1
+#         return hits
+
+
+# class MashMapIndex:
+#     def __init__(self, ref_seq: str, k: int, windows=[15,30,60]):
+#         self.k = k
+#         self.windows = windows
+#         self.index = defaultdict(lambda: array('I'))
+#         self.ref_seq = ref_seq
+#         self.build_index(ref_seq)
+#
+#     def build_index(self, ref_seq: str):
+#         for w in self.windows:
+#             for pos, m in get_minimizers(ref_seq, k=self.k, w=w):
+#                 self.index[(w,m)].append(pos)
+#
+#     def query(self, read_seq: str):
+#         hits = defaultdict(int)
+#         for w in self.windows:
+#             for read_pos, m in get_minimizers(read_seq, k=self.k, w=w):
+#                 ref_positions = self.index.get((w,m))
+#                 if not ref_positions:
+#                     continue
+#                 for ref_pos in ref_positions:
+#                     offset = ref_pos - read_pos
+#                     hits[offset] += 1
+#         return hits
+
 
 def canonical_kmer(kmer: str) -> str:
-    """Return lexicographically smaller of kmer and its reverse complement."""
     complement = str.maketrans("ACGT", "TGCA")
     rc = kmer.translate(complement)[::-1]
     return min(kmer, rc)
 
+# def rolling_kmer_hashes(seq: str, k: int):
+#     """Compute k-mer hashes using canonical k-mers."""
+#     n = len(seq)
+#     if n < k:
+#         return []
+#     base2bit = {'A':0,'C':1,'G':2,'T':3}
+#     mask = (1 << (2*k)) - 1
+#     rolling = 0
+#     hashes = []
+#     for i in range(n):
+#         c = seq[i]
+#         if c not in base2bit:
+#             rolling = 0
+#             continue
+#         rolling = ((rolling << 2) & mask) | base2bit[c]
+#         if i >= k-1:
+#             kmer = seq[i-k+1:i+1]
+#             can_kmer = canonical_kmer(kmer)
+#             h = hash(can_kmer)
+#             hashes.append(h)
+#     return hashes
+
+def hash_kmer(kmer: str) -> int:
+    h = hashlib.md5(kmer.encode('utf-8')).digest()
+    return int.from_bytes(h[:4], 'little')
+
 def rolling_kmer_hashes(seq: str, k: int):
-    """Compute k-mer hashes using canonical k-mers."""
-    n = len(seq)
-    if n < k:
-        return []
     base2bit = {'A':0,'C':1,'G':2,'T':3}
     mask = (1 << (2*k)) - 1
     rolling = 0
-    hashes = []
-    for i in range(n):
-        c = seq[i]
+    valid = 0
+    for i, c in enumerate(seq):
         if c not in base2bit:
             rolling = 0
+            valid = 0
             continue
         rolling = ((rolling << 2) & mask) | base2bit[c]
-        if i >= k-1:
+        valid += 1
+        if valid >= k:
             kmer = seq[i-k+1:i+1]
-            can_kmer = canonical_kmer(kmer)
-            h = hash(can_kmer)
-            hashes.append(h)
-    return hashes
+            yield hash_kmer(canonical_kmer(kmer))
 
 def mashmap_map_read(read_seq: str, index: MashMapIndex, min_hits_ratio=0.2):
     hits = index.query(read_seq)
@@ -161,7 +214,5 @@ def main():
                 fout.write(f"{read.id}\t{pos}\t{pos + len(read_seq)}\n")
                 break
 
-
-
-if _name_ == "_main_":
+if __name__ == "__main__":
     main()
