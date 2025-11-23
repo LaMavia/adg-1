@@ -64,18 +64,8 @@ def hash_kmer(kmer: str) -> int:
     return int.from_bytes(h[:4], 'little')
 
 def rolling_kmer_hashes(seq: str, k: int):
-    base2bit = {'A':0,'C':1,'G':2,'T':3}
-    mask = (1 << (2*k)) - 1
-    rolling = 0
-    valid = 0
-    for i, c in enumerate(seq):
-        if c not in base2bit:
-            rolling = 0
-            valid = 0
-            continue
-        rolling = ((rolling << 2) & mask) | base2bit[c]
-        valid += 1
-        if valid >= k:
+    for i, _ in enumerate(seq):
+        if i >= k:
             kmer = seq[i-k+1:i+1]
             yield hash_kmer(canonical_kmer(kmer))
 
