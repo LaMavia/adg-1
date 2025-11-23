@@ -381,9 +381,9 @@ def queryIndexEdit(p, t, k, index):
             lf = max(0, hit - poff - k)
             # right edge of T to include in DP matrix
             rt = min(len(t), hit - poff + len(p) + k)
-            if lf < last_rt:
-                B += 1
-                continue
+            # if lf < last_rt:
+            #     B += 1
+            #     continue
 
             n_checked += 1
             NB += 1
