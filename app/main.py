@@ -456,17 +456,19 @@ def queryIndexEdit(p, t, k, index):
 
 from collections import defaultdict
 import hashlib
+from mmh3 import hash
 
 def kmer_hash(kmer: str) -> int:
-    return int(hashlib.md5(kmer.encode()).hexdigest(), 16)
+    return hash(kmer)
+    # return int(hashlib.md5(kmer.encode()).hexdigest(), 16)
 
 def get_minimizers(seq: str, k: int = 15, w: int = 10):
     """Return list of minimizer hashes for a sequence."""
     minimizers = []
     for i in range(len(seq) - w + 1):
         window = seq[i:i+w]
-        kmer_hashes = [kmer_hash(window[j:j+k]) for j in range(w - k + 1)]
-        minimizers.append(min(kmer_hashes))
+        minim = min(kmer_hash(window[j:j+k]) for j in range(w - k + 1))
+        minimizers.append(minim)
     return minimizers
 
 class MashMapIndex:
@@ -499,9 +501,12 @@ def mashmap_map_read(read_seq: str, index: MashMapIndex, min_hits_ratio=0.2):
     hits = index.query(read_seq)
     # Filter hits by support: require enough matching minimizers
     min_hits = max(1, int(len(get_minimizers(read_seq, k=index.k, w=index.windows[0])) * min_hits_ratio))
-    candidate_positions = [pos for pos, count in hits.items() if count >= min_hits]
+    try:
+      candidate_positions = [next(pos for pos, count in hits.items() if count >= min_hits)]
+    except StopIteration:
+      candidate_positions = []
+
     # Remove duplicates or repetitive hits
-    candidate_positions = sorted(set(candidate_positions))
     return candidate_positions
 
 
