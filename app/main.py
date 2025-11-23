@@ -14,7 +14,6 @@ import math
 from contextlib import contextmanager
 from time import perf_counter
 
-
 @contextmanager
 def catchtime(label: str):
     t1 = t2 = perf_counter()
@@ -24,7 +23,7 @@ def catchtime(label: str):
 
 
 def radixpass(a, b, r, n, k) :
-  c = array("i", [0]*(k+1))
+  c = array("I", [0]*(k+1))
   for i in range(n) :
     c[r[a[i]]]+=1
 
@@ -42,8 +41,8 @@ def direct_kark_sort(s) :
   k = len(alphabet)
   n = len(s)
   t = {None:0, '$': 1, 'A': 2, 'C': 3, 'G': 4, 'T': 5}
-  SA = array('i', [0]*(n+3))
-  kark_sort(array('i', [t[c] for c in s]+[0]*3), SA, n, k)
+  SA = array('I', [0]*(n+3))
+  kark_sort(array('I', [t[c] for c in s]+[0]*3), SA, n, k)
   return SA[:n]
 
 def kark_sort(s, SA, n, K):
@@ -52,12 +51,11 @@ def kark_sort(s, SA, n, K):
   n2  = n // 3
   n02 = n0 + n2
       
-  SA12 = array('i', [0]*(n02+3))
-  SA0  = array('i', [0]*n0)
+  SA12 = array('I', [0]*(n02+3))
+  SA0  = array('I', [0]*n0)
 
-  s12 = [i for i in range(n+(n0-n1)) if i%3] 
-  s12.extend([0]*3)
-  s12 = array('i', s12)
+  s12 = [i for i in range(n+(n0-n1)) if i%3 != 0] + [0,0,0] 
+  s12 = array('I', s12)
 
   radixpass(s12, SA12, s[2:], n02, K)
   radixpass(SA12, s12, s[1:], n02, K)
@@ -84,7 +82,7 @@ def kark_sort(s, SA, n, K):
     for i in range(n02) :
       SA12[s12[i]-1] = i
 
-  s0 = array('i',[SA12[i]*3 for i in range(n02) if SA12[i]<n0])
+  s0 = array('I',[SA12[i]*3 for i in range(n02) if SA12[i]<n0])
   radixpass(s0, SA0, s, n0, K)
   
   p = j = k = 0
@@ -157,7 +155,8 @@ def trace(D, x, y, yl: int, yr: int):
     return j, xscript
 
 def allocDpArray(p: str, t_len: int):
-    D = np.zeros((len(p)+1, t_len+1), dtype=int)
+    D = np.zeros((len(p)+1, t_len+1), dtype=np.uint32)
+    # D = np.zeros((len(p)+1, t_len+1), dtype=int)
     D[1:, 0] = range(1, len(p)+1)
 
     return D
@@ -304,6 +303,7 @@ class FmIndex():
     
     def resolve(self, row):
         ''' Given BWM row, return its offset w/r/t T '''
+        # with catchtime(f'resolve {row}'):
         def stepLeft(row):
             ''' Step left according to character in given BWT row '''
             c = self.bwt[row]
@@ -347,38 +347,67 @@ def partition(p, pieces=2):
         idx = newIdx
     return ps
 
+B = 0
+NB = 0
+
 def queryIndexEdit(p, t, k, index):
     ''' Look for occurrences of p in t with up to k edits using an
         index combined with dynamic-programming alignment. '''
+    global B, NB
+    def aux(D: NDArray | None, dp_range: int, lf: int, rt: int):
+        # left edge of T to include in DP matrix
+
+        if (hit_range := rt - lf) > dp_range or D is None:
+            D = allocDpArray(p, hit_range)
+            dp_range = hit_range
+        # with catchtime(f"[kEditDp] range={rt-lf + 1}"):
+        mn, off, xcript = kEditDp(p, t, lf,rt, k, D)
+        off += lf
+        ret = None
+        if mn <= k:
+            ret = (mn, off, off + xcript)
+        return D, lf, rt, dp_range, ret
+
+
     for part, poff in partition(p, k+1):
         D : NDArray | None = None
         dp_range = 0
+        last_lf = last_rt = lf = rt = 0
         for hit in index.occurrences(part): # query index w/ partition
-            # left edge of T to include in DP matrix
             lf = max(0, hit - poff - k)
             # right edge of T to include in DP matrix
             rt = min(len(t), hit - poff + len(p) + k)
-            if (hit_range := rt - lf) > dp_range or D is None:
-                D = allocDpArray(p, hit_range)
-                dp_range = hit_range
-            # with catchtime(f"[kEditDp] range={rt-lf + 1}"):
-            mn, off, xcript = kEditDp(p, t, lf,rt, k, D)
-            off += lf
-            if mn <= k:
-                yield (mn, off, off + xcript)
+            if lf < last_rt:
+                B += 1
+                continue
+
+            NB += 1
+            last_rt = rt
+            last_lf = lf
+            D, lf, rt, dp_range, ret = aux(D, dp_range, lf, rt)
+            if ret is not None:
+                yield ret
+
+        if last_rt != rt or last_lf != lf:
+            D, lf, rt, dp_range, ret = aux(D, dp_range, lf, rt)
+            if ret is not None:
+                yield ret
                 
 def main():
+    global B, NB
     seq_rec=next(SeqIO.parse(argv[1], "fasta"))
     t = str(seq_rec.seq)
     with catchtime("fm-index"):
-        index = FmIndex(t)
+        index = FmIndex(t, 11, 11)
 
     fout = open(argv[3], "w")
     reads = list(SeqIO.parse(argv[2], "fasta"))
-    for read in tqdm(reads):
+    bar = tqdm(reads)
+    for read in bar:
         for hit in queryIndexEdit(str(read.seq), t, len(read.seq)//9, index):
             fout.write("{}\t{}\t{}\n".format(read.id, hit[1], hit[2]))
             break
+        bar.set_postfix({'bail': f'{B/(NB + B) * 100:.2f}%'})
     fout.close()
 
 if __name__ == "__main__":
