@@ -14,6 +14,7 @@
           tqdm
           numpy
           biopython
+          mmh3
         ];
       };
     }
