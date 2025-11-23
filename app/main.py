@@ -440,19 +440,89 @@ def queryIndexEdit(p, t, k, index):
             if mn <= k:
                 yield (mn, off, off + xcript)
                 
-def main():
-    seq_rec=next(SeqIO.parse(argv[1], "fasta"))
-    t = str(seq_rec.seq)
-    with catchtime("fm-index"):
-        index = FmIndex(t)
+# def main():
+#     seq_rec=next(SeqIO.parse(argv[1], "fasta"))
+#     t = str(seq_rec.seq)
+#     with catchtime("fm-index"):
+#         index = FmIndex(t)
+#
+#     fout = open(argv[3], "w")
+#     reads = list(SeqIO.parse(argv[2], "fasta"))
+#     for read in tqdm(reads):
+#         for hit in queryIndexEdit(str(read.seq), t, len(read.seq)//9, index):
+#             fout.write("{}\t{}\t{}\n".format(read.id, hit[1], hit[2]))
+#             break
+#     fout.close()
 
-    fout = open(argv[3], "w")
+from collections import defaultdict
+import hashlib
+
+def kmer_hash(kmer: str) -> int:
+    return int(hashlib.md5(kmer.encode()).hexdigest(), 16)
+
+def get_minimizers(seq: str, k: int = 15, w: int = 10):
+    """Return list of minimizer hashes for a sequence."""
+    minimizers = []
+    for i in range(len(seq) - w + 1):
+        window = seq[i:i+w]
+        kmer_hashes = [kmer_hash(window[j:j+k]) for j in range(w - k + 1)]
+        minimizers.append(min(kmer_hashes))
+    return minimizers
+
+class MashMapIndex:
+    """Hierarchical minimizer index."""
+    def __init__(self, ref_seq: str, k: int = 15, windows=[10,20,40]):
+        self.k = k
+        self.windows = windows
+        self.index = defaultdict(list)
+        self.ref_seq = ref_seq
+        self.build_index(ref_seq)
+
+    def build_index(self, ref_seq: str):
+        for w in self.windows:
+            minimizers = get_minimizers(ref_seq, k=self.k, w=w)
+            for pos, m in enumerate(minimizers):
+                self.index[(w, m)].append(pos)
+
+    def query(self, read_seq: str):
+        hits = defaultdict(int)
+        for w in self.windows:
+            minimizers = get_minimizers(read_seq, k=self.k, w=w)
+            for m in minimizers:
+                for pos in self.index.get((w, m), []):
+                    hits[pos - minimizers.index(m)] += 1
+        return hits
+
+
+def mashmap_map_read(read_seq: str, index: MashMapIndex, min_hits_ratio=0.2):
+    """Return candidate mapping positions for read."""
+    hits = index.query(read_seq)
+    # Filter hits by support: require enough matching minimizers
+    min_hits = max(1, int(len(get_minimizers(read_seq, k=index.k, w=index.windows[0])) * min_hits_ratio))
+    candidate_positions = [pos for pos, count in hits.items() if count >= min_hits]
+    # Remove duplicates or repetitive hits
+    candidate_positions = sorted(set(candidate_positions))
+    return candidate_positions
+
+
+def main():
+    seq_rec = next(SeqIO.parse(argv[1], "fasta"))
+    genome = str(seq_rec.seq)
+    print("Building MashMap index...")
+    with catchtime("mashmap index"):
+        index = MashMapIndex(genome, k=15, windows=[15,30,60])
+
     reads = list(SeqIO.parse(argv[2], "fasta"))
+    fout = open(argv[3], "w")
+
     for read in tqdm(reads):
-        for hit in queryIndexEdit(str(read.seq), t, len(read.seq)//9, index):
-            fout.write("{}\t{}\t{}\n".format(read.id, hit[1], hit[2]))
-            break
+        read_seq = str(read.seq)
+        positions = mashmap_map_read(read_seq, index, min_hits_ratio=0.2)
+        for pos in positions:
+            fout.write(f"{read.id}\t{pos}\t{pos + len(read_seq)}\n")
+            break  # report only first candidate for simplicity
     fout.close()
+
 
 if __name__ == "__main__":
     main()
