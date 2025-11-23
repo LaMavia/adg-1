@@ -1,20 +1,10 @@
 #!/usr/bin/env python3
 from Bio import SeqIO
 from sys import argv
-from contextlib import contextmanager
-from time import perf_counter
-from tqdm import tqdm
 import hashlib
 from collections import defaultdict, deque
 from array import array
 import math
-
-@contextmanager
-def catchtime(label: str):
-    t1 = t2 = perf_counter()
-    yield
-    t2 = perf_counter()
-    print(f'{label} took {t2 - t1:.3f} s')
 
 
 def get_minimizers(seq: str, k: int, w: int):
@@ -26,7 +16,7 @@ def get_minimizers(seq: str, k: int, w: int):
         if len(window) == w:
             yield i - w + 1, min(window)
 
-def choose_k_for_error(read_len: int, err_rate: float):
+def choose_k_for_error(err_rate: float):
     """Pick k such that (1-err_rate)^k ~ 0.25-0.3 to tolerate 5-10% errors."""
     k = max(10, min(20, int(-math.log(0.25)/math.log(1-err_rate))))
     return k
@@ -35,7 +25,6 @@ class MashMapIndex:
     def __init__(self, ref_seq: str, k: int, windows=[15,30,60]):
         self.k = k
         self.windows = windows
-        # use array('I') for memory-efficient storage
         self.index = defaultdict(lambda: array('I'))
         self.build_index(ref_seq)
 
@@ -83,7 +72,6 @@ def mashmap_map_read(read_seq: str, index: MashMapIndex, min_hits_ratio=0.2):
     hits = index.query(read_seq)
     if not hits:
         return []
-    # pick offset with maximum supporting minimizers
     max_offset, max_count = max(hits.items(), key=lambda x: x[1])
     first_w = index.windows[0]
     minimizer_count = sum(1 for _ in get_minimizers(read_seq, k=index.k, w=first_w))
@@ -93,21 +81,16 @@ def mashmap_map_read(read_seq: str, index: MashMapIndex, min_hits_ratio=0.2):
     return [max_offset]
 
 
-
 def main():
     seq_rec = next(SeqIO.parse(argv[1], "fasta"))
     genome = str(seq_rec.seq)
 
-    k = choose_k_for_error(10000, 0.2)
-    print(f"Using k={k}")
-
-    print("Building MashMap index...")
-    with catchtime("mashmap index"):
-        index = MashMapIndex(genome, k=k, windows=[15,30,60])
+    k = choose_k_for_error(0.2)
+    index = MashMapIndex(genome, k=k, windows=[15,30,60])
 
     reads = SeqIO.parse(argv[2], "fasta")
     with open(argv[3], "w") as fout:
-        for read in tqdm(reads):
+        for read in reads:
             read_seq = str(read.seq)
             positions = mashmap_map_read(read_seq, index, min_hits_ratio=0.2)
             for pos in positions:
