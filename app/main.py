@@ -3,7 +3,7 @@
 
 import sys
 import numpy as np
-# from collections import deque
+from collections import defaultdict
 from array import array
 from numpy._typing import NDArray
 from tqdm import tqdm
@@ -334,7 +334,7 @@ class FmIndex():
 # First we make a function that splits a string p up into a set of
 # non-overlapping, non-empty substrings.
 
-def partition(p, pieces=2):
+def partition(p: str, pieces=2) -> list[tuple[str, int]]:
     assert len(p) >= pieces
     base, mod = len(p) // pieces, len(p) % pieces
     idx = 0
@@ -349,6 +349,8 @@ def partition(p, pieces=2):
 
 B = 0
 NB = 0
+# part -> [(  ) for i_p, p in enumerate(...)]
+batched_partitions : defaultdict[str, list[tuple[int, int]]] = defaultdict()
 
 def queryIndexEdit(p, t, k, index):
     ''' Look for occurrences of p in t with up to k edits using an
@@ -369,11 +371,14 @@ def queryIndexEdit(p, t, k, index):
         return D, lf, rt, dp_range, ret
 
 
-    for part, poff in partition(p, k+1):
-        D : NDArray | None = None
-        dp_range = 0
+    D : NDArray | None = None
+    dp_range = 0
+    partitions = sorted(list((part, poff, occs) for part, poff in partition(p, k+1) if len(occs := list(index.occurrences(part))) > 0), key=lambda a: len(a[2]))
+    for _, poff, occurences in partitions:
         last_lf = last_rt = lf = rt = 0
-        for hit in index.occurrences(part): # query index w/ partition
+        # print(f"|occ|={len(occurences)}", end=": ")
+        n_checked = 0
+        for hit in occurences: # query index w/ partition
             lf = max(0, hit - poff - k)
             # right edge of T to include in DP matrix
             rt = min(len(t), hit - poff + len(p) + k)
@@ -381,6 +386,7 @@ def queryIndexEdit(p, t, k, index):
                 B += 1
                 continue
 
+            n_checked += 1
             NB += 1
             last_rt = rt
             last_lf = lf
