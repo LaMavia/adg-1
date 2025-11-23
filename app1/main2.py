@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+from collections import defaultdict
+from array import array
+from Bio import SeqIO
+from sys import argv
+from contextlib import contextmanager
+from time import perf_counter
+from tqdm import tqdm
+from mmh3 import hash
+import math
+
+@contextmanager
+def catchtime(label: str):
+    t1 = t2 = perf_counter()
+    yield
+    t2 = perf_counter()
+    print(f'{label} took {t2 - t1:.3f} s')
+
+
+def rolling_kmer_hashes(seq: str, k: int):
+    """Compute rolling k-mer hashes using 2-bit encoding and mmh3."""
+    n = len(seq)
+    if n < k:
+        return []
+    h = hash(seq[:k])
+    result = [h]
+    mask = (1 << (2 * k)) - 1
+    base2bit = {'A':0,'C':1,'G':2,'T':3}
+    rolling = 0
+    valid = True
+    for i in range(n - k + 1):
+        if i == 0:
+            # first k-mer already hashed
+            rolling = 0
+            for c in seq[:k]:
+                rolling = (rolling << 2) | base2bit.get(c,0)
+            continue
+        # shift left 2 bits and add new nucleotide
+        rolling = ((rolling << 2) & mask) | base2bit.get(seq[i+k-1],0)
+        h = hash(seq[i:i+k])  # can also use rolling hash, kept simple for mmh3
+        result.append(h)
+    return result
+
+
+def get_minimizers(seq: str, k: int, w: int):
+    """Yield (window_pos, minimizer_hash) using rolling k-mer hashes."""
+    kmer_hashes = rolling_kmer_hashes(seq, k)
+    for i in range(len(kmer_hashes) - w + 1):
+        window = kmer_hashes[i:i+w]
+        minim = min(window)
+        yield i, minim
+
+
+def choose_k_for_error(read_len: int, err_rate: float):
+    """Pick k such that (1-err_rate)^k ~ 0.25-0.3 to tolerate 5-10% errors."""
+    k = max(10, min(20, int(-math.log(0.25)/math.log(1-err_rate))))
+    return k
+
+
+class MashMapIndex:
+    def __init__(self, ref_seq: str, k: int, windows=[15,30,60]):
+        self.k = k
+        self.windows = windows
+        self.index = defaultdict(lambda: array('I'))
+        self.ref_seq = ref_seq
+        self.build_index(ref_seq)
+
+    def build_index(self, ref_seq: str):
+        for w in self.windows:
+            for pos, m in get_minimizers(ref_seq, k=self.k, w=w):
+                self.index[(w,m)].append(pos)
+
+    def query(self, read_seq: str):
+        hits = defaultdict(int)
+        for w in self.windows:
+            for read_pos, m in get_minimizers(read_seq, k=self.k, w=w):
+                ref_positions = self.index.get((w,m))
+                if not ref_positions:
+                    continue
+                for ref_pos in ref_positions:
+                    offset = ref_pos - read_pos
+                    hits[offset] += 1
+        return hits
+
+
+def mashmap_map_read(read_seq: str, index: MashMapIndex, min_hits_ratio=0.2):
+    hits = index.query(read_seq)
+    first_w = index.windows[0]
+    minimizer_count = sum(1 for _ in get_minimizers(read_seq, k=index.k, w=first_w))
+    min_hits = max(1, int(minimizer_count * min_hits_ratio))
+
+    try:
+        candidate_positions = [next(pos for pos,count in hits.items() if count >= min_hits)]
+    except StopIteration:
+        candidate_positions = []
+
+    return candidate_positions
+
+
+def main():
+    seq_rec = next(SeqIO.parse(argv[1], "fasta"))
+    genome = str(seq_rec.seq)
+
+    # choose k based on expected error rate ~0.08 and read length ~1000
+    k = choose_k_for_error(1000, 0.05)
+    print(f"Using k={k}")
+
+    print("Building MashMap index...")
+    with catchtime("mashmap index"):
+        index = MashMapIndex(genome, k=k + 4, windows=[15,30,60])
+
+    # use generator instead of loading all reads
+    reads = SeqIO.parse(argv[2], "fasta")
+    with open(argv[3], "w") as fout:
+        for read in tqdm(reads):
+            read_seq = str(read.seq)
+            positions = mashmap_map_read(read_seq, index, min_hits_ratio=0.2)
+            for pos in positions:
+                fout.write(f"{read.id}\t{pos}\t{pos + len(read_seq)}\n")
+                break
+
+
+
+if __name__ == "__main__":
+    main()

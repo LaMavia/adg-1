@@ -1,6 +1,7 @@
 import sys
 import time
 import subprocess
+from resource import RUSAGE_CHILDREN, getrusage
 
 def parse_output(file_path) -> dict:
     mapping = dict()
@@ -57,6 +58,9 @@ def main():
     subprocess.run(["python3", mapper, reference_file, reads, output_file], check=True, stderr=sys.stderr)
     end_time = time.time() - start_time 
 
+    usage = getrusage(RUSAGE_CHILDREN)
+    max_memory_usage = usage.ru_maxrss/1000
+
     # get the real and predicted reads
     predicted = parse_output(output_file)
     truth = parse_output(ground_truth)
@@ -73,6 +77,7 @@ def main():
 
     print(f"\nTotal time: {end_time:.2f} s")
     print(f"Average time per read: {avg_time:.3f} s/read")
+    print(f"Peak memory usage: {max_memory_usage:.3f} MB")
 
 
 if __name__ == "__main__":
