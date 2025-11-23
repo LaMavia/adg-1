@@ -10,6 +10,7 @@ from tqdm import tqdm
 from Bio import SeqIO
 from sys import argv
 import math
+from itertools import chain, repeat
 
 from contextlib import contextmanager
 from time import perf_counter
@@ -42,7 +43,7 @@ def direct_kark_sort(s) :
   n = len(s)
   t = {None:0, '$': 1, 'A': 2, 'C': 3, 'G': 4, 'T': 5}
   SA = array('I', [0]*(n+3))
-  kark_sort(array('I', [t[c] for c in s]+[0]*3), SA, n, k)
+  kark_sort(array('I', chain((t[c] for c in s), [0,0,0])), SA, n, k)
   return SA[:n]
 
 def kark_sort(s, SA, n, K):
@@ -51,11 +52,10 @@ def kark_sort(s, SA, n, K):
   n2  = n // 3
   n02 = n0 + n2
       
-  SA12 = array('I', [0]*(n02+3))
-  SA0  = array('I', [0]*n0)
+  SA12 = array('I', repeat(0, n02 + 3))
+  SA0  = array('I', repeat(0, n0))
 
-  s12 = [i for i in range(n+(n0-n1)) if i%3 != 0] + [0,0,0] 
-  s12 = array('I', s12)
+  s12 = array('I', chain((i for i in range(n+(n0-n1)) if i%3 != 0), [0,0,0]))
 
   radixpass(s12, SA12, s[2:], n02, K)
   radixpass(SA12, s12, s[1:], n02, K)
@@ -82,7 +82,7 @@ def kark_sort(s, SA, n, K):
     for i in range(n02) :
       SA12[s12[i]-1] = i
 
-  s0 = array('I',[SA12[i]*3 for i in range(n02) if SA12[i]<n0])
+  s0 = array('I',(SA12[i]*3 for i in range(n02) if SA12[i]<n0))
   radixpass(s0, SA0, s, n0, K)
   
   p = j = k = 0
@@ -403,7 +403,7 @@ def main():
     seq_rec=next(SeqIO.parse(argv[1], "fasta"))
     t = str(seq_rec.seq)
     with catchtime("fm-index"):
-        index = FmIndex(t, 11, 11)
+        index = FmIndex(t, 1, 1)
 
     fout = open(argv[3], "w")
     reads = list(SeqIO.parse(argv[2], "fasta"))
