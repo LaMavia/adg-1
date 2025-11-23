@@ -376,7 +376,6 @@ def queryIndexEdit(p, t, k, index):
     partitions = sorted(list((part, poff, occs) for part, poff in partition(p, k+1) if len(occs := list(index.occurrences(part))) > 0), key=lambda a: len(a[2]))
     for _, poff, occurences in partitions:
         last_lf = last_rt = lf = rt = 0
-        # print(f"|occ|={len(occurences)}", end=": ")
         n_checked = 0
         for hit in occurences: # query index w/ partition
             lf = max(0, hit - poff - k)
