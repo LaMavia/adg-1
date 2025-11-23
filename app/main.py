@@ -403,7 +403,7 @@ def main():
     seq_rec=next(SeqIO.parse(argv[1], "fasta"))
     t = str(seq_rec.seq)
     with catchtime("fm-index"):
-        index = FmIndex(t, 1, 1)
+        index = FmIndex(t, 20, 20)
 
     fout = open(argv[3], "w")
     reads = list(SeqIO.parse(argv[2], "fasta"))
